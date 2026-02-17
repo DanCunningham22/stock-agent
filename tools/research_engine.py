@@ -69,6 +69,11 @@ def init_db():
 # ============================================================
 
 def get_all_us_stocks():
+    """
+    Fetch US stock universe with timeout + fallback.
+    Streamlit Cloud safe.
+    """
+
     urls = {
         "nasdaq": "https://ftp.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
         "other": "https://ftp.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
@@ -77,20 +82,38 @@ def get_all_us_stocks():
     all_tickers = []
 
     for name, url in urls.items():
-        response = requests.get(url)
-        df = pd.read_csv(StringIO(response.text), sep="|")
-        df = df[df["Symbol"] != "File Creation Time"]
+        try:
+            response = requests.get(url, timeout=15)
+            response.raise_for_status()
 
-        if name == "nasdaq":
-            df = df[df["ETF"] == "N"]
-            tickers = df["Symbol"].tolist()
-        else:
-            df = df[df["ETF"] == "N"]
-            tickers = df["ACT Symbol"].tolist()
+            df = pd.read_csv(StringIO(response.text), sep="|")
+            df = df[df["Symbol"] != "File Creation Time"]
 
-        all_tickers.extend(tickers)
+            if name == "nasdaq":
+                df = df[df["ETF"] == "N"]
+                tickers = df["Symbol"].tolist()
+            else:
+                df = df[df["ETF"] == "N"]
+                tickers = df["ACT Symbol"].tolist()
+
+            all_tickers.extend(tickers)
+
+        except Exception as e:
+            print(f"Universe download failed for {name}: {e}")
+
+    # Fallback if NASDAQ site fails
+    if not all_tickers:
+        print("Using fallback S&P 500 universe.")
+
+        # Pull S&P 500 from Wikipedia (much more reliable)
+        sp500 = pd.read_html(
+            "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        )[0]
+
+        all_tickers = sp500["Symbol"].tolist()
 
     return sorted(set(all_tickers))
+
 
 
 # ============================================================
