@@ -77,7 +77,7 @@ if mode == "Quant Screener":
 
         display_df = results.copy()
 
-        display_df = display_df[[
+        columns_to_show = [
             "ticker",
             "total_score",
             "rank",
@@ -90,7 +90,7 @@ if mode == "Quant Screener":
             "analyst_score",
             "liquidity_score",
             "volatility_score"
-        ]]
+        ]
 
         existing_cols = [c for c in columns_to_show if c in display_df.columns]
 
