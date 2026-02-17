@@ -4,6 +4,7 @@ from datetime import date
 
 from orchestrator import analyze_stock, run_daily_research, run_alert_scan
 from tools.cache import init_cache
+from tools.screener import screen_stocks, get_available_sectors
 from config import WATCHLIST
 
 st.set_page_config(page_title="Stock Research Agent", page_icon="📈", layout="wide")
@@ -12,11 +13,11 @@ Path("reports").mkdir(exist_ok=True)
 
 # Sidebar
 st.sidebar.title("Stock Research Agent")
-st.sidebar.markdown("AI research + Polymarket signals + alerts")
+st.sidebar.markdown("AI research + Polymarket + screener + alerts")
 st.sidebar.markdown("---")
-mode = st.sidebar.radio("Mode", ["Single Stock", "Batch Analysis", "Alert Scanner", "Past Reports"])
+mode = st.sidebar.radio("Mode", ["Screener", "Single Stock", "Batch Analysis", "Alert Scanner", "Past Reports"])
 st.sidebar.markdown("---")
-st.sidebar.markdown("**Full analysis:** ~$0.15-0.20/stock\n\n**Alert scan:** Free\n\n*Not financial advice.*")
+st.sidebar.markdown("**Screener:** Free\n\n**Full analysis:** ~$0.15-0.20/stock\n\n**Alert scan:** Free\n\n*Not financial advice.*")
 
 
 def save_report(ticker, report):
@@ -27,7 +28,143 @@ def save_report(ticker, report):
     return filepath
 
 
-if mode == "Single Stock":
+# ── Screener Mode ────────────────────────────────────────────
+if mode == "Screener":
+    st.title("Stock Screener")
+    st.markdown("Scan ~170 stocks for opportunities using free data. **No AI cost.** Then analyze the ones you like.")
+
+    with st.expander("Filter Settings", expanded=True):
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            sectors = st.multiselect(
+                "Sectors (leave empty for all)",
+                get_available_sectors(),
+            )
+            min_market_cap = st.selectbox(
+                "Min Market Cap",
+                [("$1B", 1e9), ("$10B", 1e10), ("$50B", 5e10), ("$100B", 1e11), ("Any", 0)],
+                format_func=lambda x: x[0],
+                index=0,
+            )
+            max_results = st.slider("Max results", 10, 50, 25)
+
+        with col2:
+            max_pe = st.number_input("Max P/E Ratio (0 = no filter)", min_value=0, value=0)
+            max_forward_pe = st.number_input("Max Forward P/E (0 = no filter)", min_value=0, value=0)
+            min_revenue_growth = st.number_input("Min Revenue Growth % (0 = no filter)", min_value=0, value=0)
+
+        with col3:
+            max_debt_equity = st.number_input("Max Debt/Equity (0 = no filter)", min_value=0, value=0)
+            near_52w_low = st.checkbox("Near 52-week low (within 10%)")
+            near_52w_high = st.checkbox("Near 52-week high (within 5%)")
+
+    run_screen = st.button("Run Screener (Free)", type="primary")
+
+    if run_screen:
+        status_text = st.empty()
+        progress_bar = st.progress(0)
+
+        scan_count = [0]
+        total_estimate = len(sectors) * 40 if sectors else 170
+
+        def screen_status(msg):
+            scan_count[0] += 1
+            progress_bar.progress(min(scan_count[0] / (total_estimate / 5), 1.0))
+            status_text.markdown(f"*{msg}*")
+
+        results = screen_stocks(
+            sectors=sectors if sectors else None,
+            min_market_cap=min_market_cap[1],
+            max_pe=max_pe if max_pe > 0 else None,
+            max_forward_pe=max_forward_pe if max_forward_pe > 0 else None,
+            min_revenue_growth=min_revenue_growth if min_revenue_growth > 0 else None,
+            max_debt_to_equity=max_debt_equity if max_debt_equity > 0 else None,
+            near_52_week_low=near_52w_low,
+            near_52_week_high=near_52w_high,
+            max_results=max_results,
+            status_callback=screen_status,
+        )
+
+        status_text.empty()
+        progress_bar.empty()
+
+        if results:
+            st.success(f"Found {len(results)} stocks matching your criteria!")
+            st.markdown("---")
+
+            table_data = []
+            for r in results:
+                row = {
+                    "Ticker": r["ticker"],
+                    "Name": r["name"][:25],
+                    "Sector": r["sector"],
+                    "Price": f"${r['price']}",
+                    "Mkt Cap": r["market_cap_str"],
+                    "P/E": r["pe_ratio"] or "-",
+                    "Fwd P/E": r["forward_pe"] or "-",
+                    "Rev Growth": f"{r['revenue_growth']}%" if r["revenue_growth"] else "-",
+                    "Analyst Target": f"${r['analyst_target']}" if r["analyst_target"] else "-",
+                    "Upside": f"{r['upside_pct']}%" if r["upside_pct"] else "-",
+                    "Rating": r["recommendation"] or "-",
+                }
+                table_data.append(row)
+
+            st.dataframe(table_data, use_container_width=True, hide_index=True)
+
+            st.markdown("---")
+            st.markdown("### Run AI Analysis")
+            st.markdown("Select stocks from the results above to get full AI analysis with scoring.")
+
+            ticker_options = [r["ticker"] for r in results]
+            selected = st.multiselect(
+                "Select stocks to analyze (~$0.20 each)",
+                ticker_options,
+            )
+
+            if selected:
+                estimated_cost = len(selected) * 0.20
+                st.markdown(f"**Estimated cost:** ~${estimated_cost:.2f}")
+
+                run_analysis = st.button(f"Analyze {len(selected)} stocks", type="primary")
+
+                if run_analysis:
+                    progress_bar2 = st.progress(0)
+                    status_text2 = st.empty()
+                    reports = {}
+
+                    for i, ticker in enumerate(selected):
+                        status_text2.markdown(f"**[{i+1}/{len(selected)}]** Analyzing {ticker}...")
+                        try:
+                            report = analyze_stock(ticker)
+                            if report and report.strip():
+                                reports[ticker] = report
+                                save_report(ticker, report)
+                        except Exception as e:
+                            reports[ticker] = f"Error: {e}"
+                        progress_bar2.progress((i + 1) / len(selected))
+
+                    status_text2.empty()
+                    progress_bar2.empty()
+
+                    st.success(f"Done! Analyzed {len(reports)} stocks.")
+                    st.markdown("---")
+
+                    if reports:
+                        tabs = st.tabs(list(reports.keys()))
+                        for tab, (ticker, report) in zip(tabs, reports.items()):
+                            with tab:
+                                st.markdown(report)
+                                st.download_button(
+                                    f"Download {ticker}", data=report,
+                                    file_name=f"{ticker}_{date.today()}.md",
+                                    mime="text/markdown", key=f"screen_dl_{ticker}",
+                                )
+        else:
+            st.warning("No stocks matched your filters. Try loosening the criteria.")
+
+
+elif mode == "Single Stock":
     st.title("Analyze a Stock")
     st.markdown("Full AI analysis with scoring, insider activity, Polymarket signals, and macro context.")
 
