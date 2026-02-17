@@ -1,172 +1,124 @@
 import yfinance as yf
 import requests
+import time
 
 
-# Pre-built lists of popular stocks by sector
-STOCK_UNIVERSE = {
-    "Technology": [
-        "AAPL", "MSFT", "GOOGL", "META", "NVDA", "TSLA", "AVGO", "ADBE", "CRM", "AMD",
-        "INTC", "ORCL", "CSCO", "QCOM", "TXN", "NOW", "IBM", "AMAT", "MU", "LRCX",
-        "KLAC", "SNPS", "CDNS", "MRVL", "FTNT", "PANW", "CRWD", "ZS", "DDOG", "NET",
-        "SNOW", "PLTR", "SHOP", "SQ", "COIN", "HOOD", "MSTR", "RBLX", "U", "TWLO",
-    ],
-    "Healthcare": [
-        "UNH", "JNJ", "LLY", "PFE", "ABBV", "MRK", "TMO", "ABT", "DHR", "BMY",
-        "AMGN", "GILD", "ISRG", "CVS", "ELV", "CI", "SYK", "BSX", "VRTX", "REGN",
-        "ZTS", "HUM", "IDXX", "DXCM", "MRNA", "BIIB", "ILMN", "ALGN", "HOLX", "IQV",
-    ],
-    "Financial": [
-        "BRK-B", "JPM", "V", "MA", "BAC", "WFC", "GS", "MS", "SCHW", "BLK",
-        "C", "AXP", "SPGI", "CME", "ICE", "AON", "MMC", "PGR", "TRV", "CB",
-        "MET", "AIG", "PRU", "ALL", "AFL", "FIS", "FISV", "SQ", "PYPL", "SOFI",
-    ],
-    "Consumer": [
-        "AMZN", "HD", "MCD", "NKE", "SBUX", "TGT", "COST", "WMT", "LOW", "TJX",
-        "BKNG", "MAR", "HLT", "CMG", "YUM", "DPZ", "LULU", "ROST", "DG", "DLTR",
-        "F", "GM", "TSLA", "RIVN", "LCID", "ABNB", "DASH", "UBER", "LYFT", "NFLX",
-    ],
-    "Energy & Industrials": [
-        "XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "HAL",
-        "CAT", "DE", "UNP", "UPS", "FDX", "RTX", "LMT", "NOC", "GD", "BA",
-        "HON", "GE", "MMM", "EMR", "ETN", "ITW", "ROK", "PH", "CARR", "OTIS",
-    ],
-}
-
-ALL_STOCKS = []
-for sector_stocks in STOCK_UNIVERSE.values():
-    ALL_STOCKS.extend(sector_stocks)
-ALL_STOCKS = list(set(ALL_STOCKS))  # Remove duplicates
+# ── Hardcoded popular stocks beyond S&P 500 ──────────────────
+EXTRA_STOCKS = [
+    # Popular mid/small caps, meme stocks, growth names
+    "HOOD", "SOFI", "PLTR", "RIVN", "LCID", "RBLX", "COIN", "MSTR", "AI",
+    "SMCI", "ARM", "IONQ", "RGTI", "QUBT", "SOUN", "JOBY", "LUNR",
+    "AFRM", "UPST", "HIMS", "DUOL", "CAVA", "BIRK", "GRAB",
+    "SE", "MELI", "NU", "BABA", "JD", "PDD", "NIO", "LI", "XPEV",
+    "SNAP", "PINS", "ROKU", "SPOT", "TTD", "MGNI", "PUBM",
+    "NET", "DDOG", "ZS", "CRWD", "S", "OKTA", "MDB", "SNOW", "CFLT",
+    "PATH", "DOCN", "GTLB", "BILL", "PCOR", "TOST", "TOAST",
+    "CELH", "MNST", "SAM", "ELF", "ONON", "DECK", "CROX",
+    "WOLF", "ENPH", "SEDG", "FSLR", "RUN", "NOVA",
+    "CVNA", "W", "CHWY", "ETSY", "EBAY",
+    "DKNG", "PENN", "RSI", "GENI", "FLUT",
+    "MP", "LAC", "ALB", "LTHM", "SQM",
+    "ARKG", "ARKK",  # Not stocks but people search for them
+]
 
 
-def screen_stocks(
-    sectors=None,
-    min_market_cap=1_000_000_000,
-    max_pe=None,
-    min_pe=None,
-    max_forward_pe=None,
-    min_revenue_growth=None,
-    min_dividend_yield=None,
-    max_debt_to_equity=None,
-    min_short_percent=None,
-    near_52_week_low=False,
-    near_52_week_high=False,
-    min_volume_ratio=None,
-    max_results=30,
-    status_callback=None,
-):
-    """
-    Screen stocks based on fundamental criteria.
-    All data comes from Yahoo Finance - completely free.
-    Returns a list of dicts with stock data that passed the filters.
-    """
-    # Determine which stocks to scan
-    if sectors:
-        tickers = []
-        for sector in sectors:
-            tickers.extend(STOCK_UNIVERSE.get(sector, []))
-        tickers = list(set(tickers))
-    else:
-        tickers = ALL_STOCKS
+def get_sp500_tickers():
+    """Fetch S&P 500 tickers from Wikipedia."""
+    try:
+        import pandas as pd
+        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        tables = pd.read_html(url)
+        sp500 = tables[0]
+        tickers = sp500["Symbol"].tolist()
+        # Fix tickers with dots (BRK.B -> BRK-B for yfinance)
+        tickers = [t.replace(".", "-") for t in tickers]
+        return tickers
+    except Exception:
+        # Fallback: return a hardcoded subset
+        return get_fallback_tickers()
 
-    results = []
-    total = len(tickers)
 
-    for i, ticker in enumerate(tickers):
-        if status_callback and i % 5 == 0:
-            status_callback(f"Scanning {i}/{total}: {ticker}...")
+def get_fallback_tickers():
+    """Fallback list if Wikipedia fetch fails."""
+    return [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK-B",
+        "JPM", "V", "UNH", "MA", "HD", "PG", "JNJ", "ABBV", "MRK", "LLY",
+        "AVGO", "COST", "PEP", "KO", "WMT", "BAC", "CRM", "ADBE", "AMD",
+        "ORCL", "CSCO", "NFLX", "TMO", "ACN", "ABT", "DHR", "MCD", "TXN",
+        "PM", "NEE", "LIN", "UNP", "INTC", "QCOM", "INTU", "CMCSA", "LOW",
+        "AMGN", "GS", "MS", "RTX", "HON", "ISRG", "BKNG", "CAT", "GE",
+        "PFE", "NOW", "SPGI", "T", "VZ", "IBM", "BA", "DE", "MMM",
+        "AMAT", "MU", "LRCX", "KLAC", "SNPS", "CDNS", "MRVL", "PANW",
+        "XOM", "CVX", "COP", "SLB", "EOG", "PXD", "DVN", "FANG",
+        "DIS", "NKE", "SBUX", "CMG", "YUM", "MAR", "HLT", "ABNB",
+        "F", "GM", "RIVN", "LCID",
+    ]
 
-        try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
 
-            if not info or not info.get("currentPrice", info.get("regularMarketPrice")):
-                continue
+def get_full_stock_list():
+    """Get S&P 500 + popular extra stocks, deduplicated."""
+    sp500 = get_sp500_tickers()
+    all_tickers = list(set(sp500 + EXTRA_STOCKS))
+    # Remove any ETFs or invalid entries
+    all_tickers = [t for t in all_tickers if t and len(t) <= 5 and t.isalpha() or "-" in t]
+    return sorted(all_tickers)
 
-            price = info.get("currentPrice", info.get("regularMarketPrice", 0))
-            market_cap = info.get("marketCap", 0) or 0
-            pe = info.get("trailingPE")
-            forward_pe = info.get("forwardPE")
-            revenue = info.get("totalRevenue", 0) or 0
-            revenue_growth = info.get("revenueGrowth")
-            dividend_yield = info.get("dividendYield")
-            debt_equity = info.get("debtToEquity")
-            short_pct = info.get("shortPercentOfFloat")
-            high_52w = info.get("fiftyTwoWeekHigh", 0) or 0
-            low_52w = info.get("fiftyTwoWeekLow", 0) or 0
-            avg_volume = info.get("averageVolume", 0) or 0
-            current_volume = info.get("volume", 0) or 0
-            target_price = info.get("targetMeanPrice")
-            recommendation = info.get("recommendationKey", "")
-            name = info.get("longName", info.get("shortName", ticker))
-            sector = info.get("sector", "Unknown")
 
-            # Apply filters
-            if market_cap < min_market_cap:
-                continue
-            if max_pe is not None and (pe is None or pe > max_pe):
-                continue
-            if min_pe is not None and (pe is None or pe < min_pe):
-                continue
-            if max_forward_pe is not None and (forward_pe is None or forward_pe > max_forward_pe):
-                continue
-            if min_revenue_growth is not None and (revenue_growth is None or revenue_growth < min_revenue_growth / 100):
-                continue
-            if min_dividend_yield is not None and (dividend_yield is None or dividend_yield < min_dividend_yield / 100):
-                continue
-            if max_debt_to_equity is not None and (debt_equity is None or debt_equity > max_debt_to_equity):
-                continue
-            if min_short_percent is not None and (short_pct is None or short_pct * 100 < min_short_percent):
-                continue
-            if near_52_week_low and price > low_52w * 1.10:
-                continue
-            if near_52_week_high and price < high_52w * 0.95:
-                continue
-            if min_volume_ratio is not None and avg_volume > 0:
-                vol_ratio = current_volume / avg_volume
-                if vol_ratio < min_volume_ratio:
-                    continue
+def scan_stock(ticker):
+    """Fetch key data for a single stock. Returns dict or None on failure."""
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
 
-            # Calculate upside to analyst target
-            upside = None
-            if target_price and price:
-                upside = round((target_price - price) / price * 100, 1)
+        if not info:
+            return None
 
-            # Position in 52-week range
-            range_52w = None
-            if high_52w and low_52w and high_52w != low_52w:
-                range_52w = round((price - low_52w) / (high_52w - low_52w) * 100, 1)
+        price = info.get("currentPrice", info.get("regularMarketPrice"))
+        if not price:
+            return None
 
-            results.append({
-                "ticker": ticker,
-                "name": name,
-                "sector": sector,
-                "price": round(price, 2),
-                "market_cap": market_cap,
-                "market_cap_str": format_market_cap(market_cap),
-                "pe_ratio": round(pe, 1) if pe else None,
-                "forward_pe": round(forward_pe, 1) if forward_pe else None,
-                "revenue_growth": round(revenue_growth * 100, 1) if revenue_growth else None,
-                "dividend_yield": round(dividend_yield * 100, 2) if dividend_yield else None,
-                "debt_to_equity": round(debt_equity, 1) if debt_equity else None,
-                "short_percent": round(short_pct * 100, 1) if short_pct else None,
-                "analyst_target": round(target_price, 2) if target_price else None,
-                "upside_pct": upside,
-                "recommendation": recommendation,
-                "52w_range_pct": range_52w,
-                "52w_high": round(high_52w, 2),
-                "52w_low": round(low_52w, 2),
-            })
+        market_cap = info.get("marketCap", 0) or 0
+        if market_cap < 500_000_000:  # Skip micro-caps under $500M
+            return None
 
-        except Exception:
-            continue
+        return {
+            "ticker": ticker,
+            "name": info.get("longName", info.get("shortName", ticker)),
+            "sector": info.get("sector", "Unknown"),
+            "industry": info.get("industry", "Unknown"),
+            "price": round(price, 2),
+            "market_cap": market_cap,
+            "market_cap_str": format_market_cap(market_cap),
+            "pe_ratio": safe_round(info.get("trailingPE")),
+            "forward_pe": safe_round(info.get("forwardPE")),
+            "revenue_growth": safe_round(info.get("revenueGrowth"), pct=True),
+            "earnings_growth": safe_round(info.get("earningsGrowth"), pct=True),
+            "profit_margin": safe_round(info.get("profitMargins"), pct=True),
+            "dividend_yield": safe_round(info.get("dividendYield"), pct=True),
+            "debt_to_equity": safe_round(info.get("debtToEquity")),
+            "short_percent": safe_round(info.get("shortPercentOfFloat"), pct=True),
+            "beta": safe_round(info.get("beta")),
+            "analyst_target": safe_round(info.get("targetMeanPrice")),
+            "recommendation": info.get("recommendationKey", ""),
+            "num_analysts": info.get("numberOfAnalystOpinions", 0) or 0,
+            "52w_high": info.get("fiftyTwoWeekHigh", 0) or 0,
+            "52w_low": info.get("fiftyTwoWeekLow", 0) or 0,
+            "avg_volume": info.get("averageVolume", 0) or 0,
+            "current_volume": info.get("volume", 0) or 0,
+        }
+    except Exception:
+        return None
 
-    # Sort by upside potential (most undervalued first)
-    results.sort(key=lambda x: x.get("upside_pct") or -999, reverse=True)
 
-    if status_callback:
-        status_callback(f"Done! {len(results)} stocks passed your filters out of {total} scanned.")
-
-    return results[:max_results]
+def safe_round(val, decimals=1, pct=False):
+    if val is None:
+        return None
+    try:
+        if pct:
+            return round(float(val) * 100, decimals)
+        return round(float(val), decimals)
+    except:
+        return None
 
 
 def format_market_cap(cap):
@@ -179,9 +131,339 @@ def format_market_cap(cap):
     return f"${cap:,.0f}"
 
 
+def calculate_upside(stock):
+    """Calculate upside to analyst target."""
+    if stock.get("analyst_target") and stock.get("price"):
+        return round((stock["analyst_target"] - stock["price"]) / stock["price"] * 100, 1)
+    return None
+
+
+def calculate_52w_position(stock):
+    """Where is price in the 52-week range? 0% = at low, 100% = at high."""
+    high = stock.get("52w_high", 0)
+    low = stock.get("52w_low", 0)
+    price = stock.get("price", 0)
+    if high and low and high != low and price:
+        return round((price - low) / (high - low) * 100, 1)
+    return None
+
+
+# ── The Four Strategies ──────────────────────────────────────
+
+def filter_value_plays(stocks):
+    """Low P/E, high analyst upside, profitable companies."""
+    results = []
+    for s in stocks:
+        pe = s.get("pe_ratio")
+        upside = calculate_upside(s)
+        margin = s.get("profit_margin")
+        analysts = s.get("num_analysts", 0)
+
+        if (pe is not None and 0 < pe < 20
+            and upside is not None and upside > 15
+            and margin is not None and margin > 0
+            and analysts >= 3):
+            s["upside_pct"] = upside
+            s["strategy"] = "VALUE"
+            s["strategy_reason"] = f"P/E {pe}, {upside}% upside to target"
+            results.append(s)
+
+    results.sort(key=lambda x: x.get("upside_pct", 0), reverse=True)
+    return results[:10]
+
+
+def filter_growth_rockets(stocks):
+    """High revenue growth, improving forward estimates."""
+    results = []
+    for s in stocks:
+        rev_growth = s.get("revenue_growth")
+        forward_pe = s.get("forward_pe")
+        pe = s.get("pe_ratio")
+        upside = calculate_upside(s)
+
+        if (rev_growth is not None and rev_growth > 20
+            and forward_pe is not None
+            and (pe is None or forward_pe < pe)):  # Forward P/E improving
+            s["upside_pct"] = upside
+            s["strategy"] = "GROWTH"
+            pe_improving = f", P/E improving {pe}->{forward_pe}" if pe else ""
+            s["strategy_reason"] = f"Revenue +{rev_growth}%{pe_improving}"
+            results.append(s)
+
+    results.sort(key=lambda x: x.get("revenue_growth", 0), reverse=True)
+    return results[:10]
+
+
+def filter_insider_signals(stocks):
+    """Stocks with recent insider buying (checked via Yahoo Finance)."""
+    results = []
+    for s in stocks:
+        ticker = s["ticker"]
+        try:
+            stock = yf.Ticker(ticker)
+            insiders = stock.insider_transactions
+            if insiders is None or insiders.empty:
+                continue
+
+            # Look for buys
+            total_buy_value = 0
+            buy_count = 0
+            for _, row in insiders.head(10).iterrows():
+                trade_type = str(row.get("Transaction", row.get("Text", ""))).lower()
+                value = row.get("Value", 0) or 0
+                if ("buy" in trade_type or "purchase" in trade_type) and value > 0:
+                    total_buy_value += value
+                    buy_count += 1
+
+            if total_buy_value >= 50_000:
+                upside = calculate_upside(s)
+                s["upside_pct"] = upside
+                s["strategy"] = "INSIDER"
+                s["insider_buy_value"] = total_buy_value
+                s["strategy_reason"] = f"{buy_count} insider buys totaling ${total_buy_value:,.0f}"
+                results.append(s)
+
+        except Exception:
+            continue
+
+    results.sort(key=lambda x: x.get("insider_buy_value", 0), reverse=True)
+    return results[:10]
+
+
+def filter_bounce_candidates(stocks):
+    """Near 52-week lows but still fundamentally sound."""
+    results = []
+    for s in stocks:
+        position = calculate_52w_position(s)
+        margin = s.get("profit_margin")
+        rec = s.get("recommendation", "")
+        analysts = s.get("num_analysts", 0)
+        upside = calculate_upside(s)
+
+        # Within 15% of 52-week low
+        if (position is not None and position < 15
+            and (
+                (margin is not None and margin > 0)  # Still profitable
+                or (rec in ["buy", "strong_buy"] and analysts >= 3)  # Or analysts say buy
+            )):
+            s["upside_pct"] = upside
+            s["52w_position"] = position
+            s["strategy"] = "BOUNCE"
+            s["strategy_reason"] = f"Only {position}% above 52w low, {upside}% upside" if upside else f"Only {position}% above 52w low"
+            results.append(s)
+
+    results.sort(key=lambda x: x.get("52w_position", 100))
+    return results[:10]
+
+
+# ── Main Screener Function ───────────────────────────────────
+
+def run_full_screener(
+    strategies=None,
+    max_candidates=30,
+    status_callback=None,
+):
+    """
+    Full market screener with 4-strategy funnel.
+
+    Stage 1: Scan all stocks (free)
+    Stage 2: Apply strategy filters
+    Stage 3: Deduplicate and rank
+
+    Returns list of candidate stocks ready for Claude analysis.
+    """
+    if strategies is None:
+        strategies = ["VALUE", "GROWTH", "INSIDER", "BOUNCE"]
+
+    # Step 1: Get ticker list
+    if status_callback:
+        status_callback("Loading stock universe...")
+
+    tickers = get_full_stock_list()
+    total = len(tickers)
+
+    if status_callback:
+        status_callback(f"Scanning {total} stocks...")
+
+    # Step 2: Scan all stocks for basic data
+    all_stocks = []
+    for i, ticker in enumerate(tickers):
+        if status_callback and i % 10 == 0:
+            pct = round(i / total * 100)
+            status_callback(f"Scanning {i}/{total} ({pct}%): {ticker}...")
+
+        data = scan_stock(ticker)
+        if data:
+            all_stocks.append(data)
+
+        # Small delay every 20 stocks to avoid rate limiting
+        if i % 20 == 0 and i > 0:
+            time.sleep(0.5)
+
+    if status_callback:
+        status_callback(f"Scanned {total} tickers, {len(all_stocks)} valid stocks found. Running strategy filters...")
+
+    # Step 3: Run strategy filters
+    all_candidates = []
+
+    if "VALUE" in strategies:
+        if status_callback:
+            status_callback("Running VALUE filter (low P/E + high upside)...")
+        value = filter_value_plays(all_stocks)
+        all_candidates.extend(value)
+        if status_callback:
+            status_callback(f"  Found {len(value)} value plays")
+
+    if "GROWTH" in strategies:
+        if status_callback:
+            status_callback("Running GROWTH filter (high revenue growth)...")
+        growth = filter_growth_rockets(all_stocks)
+        all_candidates.extend(growth)
+        if status_callback:
+            status_callback(f"  Found {len(growth)} growth rockets")
+
+    if "INSIDER" in strategies:
+        if status_callback:
+            status_callback("Running INSIDER filter (checking insider transactions, this takes a few minutes)...")
+        # Only check insider data for stocks that look decent
+        decent_stocks = [s for s in all_stocks if s.get("num_analysts", 0) >= 2]
+        insider = filter_insider_signals(decent_stocks[:100])  # Limit to top 100 to save time
+        all_candidates.extend(insider)
+        if status_callback:
+            status_callback(f"  Found {len(insider)} insider signals")
+
+    if "BOUNCE" in strategies:
+        if status_callback:
+            status_callback("Running BOUNCE filter (near 52-week lows)...")
+        bounce = filter_bounce_candidates(all_stocks)
+        all_candidates.extend(bounce)
+        if status_callback:
+            status_callback(f"  Found {len(bounce)} bounce candidates")
+
+    # Step 4: Deduplicate (stock might appear in multiple strategies)
+    seen = {}
+    for s in all_candidates:
+        ticker = s["ticker"]
+        if ticker in seen:
+            # Stock appeared in multiple strategies - boost it
+            seen[ticker]["strategies"] = seen[ticker].get("strategies", [seen[ticker]["strategy"]])
+            if s["strategy"] not in seen[ticker]["strategies"]:
+                seen[ticker]["strategies"].append(s["strategy"])
+                seen[ticker]["strategy_reason"] += f" | {s['strategy_reason']}"
+                seen[ticker]["multi_strategy"] = True
+        else:
+            s["strategies"] = [s["strategy"]]
+            s["multi_strategy"] = False
+            seen[ticker] = s
+
+    # Step 5: Sort - multi-strategy stocks first, then by upside
+    final = list(seen.values())
+    final.sort(key=lambda x: (
+        -len(x.get("strategies", [])),  # More strategies = better
+        -(x.get("upside_pct") or -999),  # Higher upside = better
+    ))
+
+    if status_callback:
+        multi = sum(1 for s in final if s.get("multi_strategy"))
+        status_callback(
+            f"Done! {len(final)} unique candidates found. "
+            f"{multi} appeared in multiple strategies (strongest signals)."
+        )
+
+    return final[:max_candidates]
+
+
 def get_available_sectors():
-    return list(STOCK_UNIVERSE.keys())
+    """Return list of sectors for UI."""
+    return ["Technology", "Healthcare", "Financial", "Consumer", "Energy & Industrials"]
 
 
-def get_sector_stocks(sector):
-    return STOCK_UNIVERSE.get(sector, [])
+# ── Simple screener (original, for quick scans) ─────────────
+
+def screen_stocks_simple(
+    sectors=None,
+    min_market_cap=1_000_000_000,
+    max_pe=None,
+    min_revenue_growth=None,
+    max_debt_to_equity=None,
+    near_52_week_low=False,
+    near_52_week_high=False,
+    max_results=30,
+    status_callback=None,
+):
+    """Quick scan of ~170 popular stocks with custom filters."""
+    STOCK_UNIVERSE = {
+        "Technology": [
+            "AAPL", "MSFT", "GOOGL", "META", "NVDA", "TSLA", "AVGO", "ADBE", "CRM", "AMD",
+            "INTC", "ORCL", "CSCO", "QCOM", "TXN", "NOW", "IBM", "AMAT", "MU", "LRCX",
+            "KLAC", "SNPS", "CDNS", "MRVL", "FTNT", "PANW", "CRWD", "ZS", "DDOG", "NET",
+            "SNOW", "PLTR", "SHOP", "SQ", "COIN", "HOOD", "RBLX", "TWLO",
+        ],
+        "Healthcare": [
+            "UNH", "JNJ", "LLY", "PFE", "ABBV", "MRK", "TMO", "ABT", "DHR", "BMY",
+            "AMGN", "GILD", "ISRG", "CVS", "ELV", "CI", "SYK", "BSX", "VRTX", "REGN",
+        ],
+        "Financial": [
+            "BRK-B", "JPM", "V", "MA", "BAC", "WFC", "GS", "MS", "SCHW", "BLK",
+            "C", "AXP", "SPGI", "CME", "ICE", "PGR", "CB", "PYPL", "SOFI",
+        ],
+        "Consumer": [
+            "AMZN", "HD", "MCD", "NKE", "SBUX", "TGT", "COST", "WMT", "LOW", "TJX",
+            "BKNG", "MAR", "HLT", "CMG", "YUM", "LULU", "DG", "NFLX", "DIS", "ABNB",
+            "UBER", "DASH",
+        ],
+        "Energy & Industrials": [
+            "XOM", "CVX", "COP", "SLB", "EOG", "MPC", "OXY",
+            "CAT", "DE", "UNP", "UPS", "RTX", "LMT", "NOC", "BA",
+            "HON", "GE", "ETN", "PH",
+        ],
+    }
+
+    if sectors:
+        tickers = []
+        for sector in sectors:
+            tickers.extend(STOCK_UNIVERSE.get(sector, []))
+        tickers = list(set(tickers))
+    else:
+        tickers = []
+        for stocks in STOCK_UNIVERSE.values():
+            tickers.extend(stocks)
+        tickers = list(set(tickers))
+
+    results = []
+    total = len(tickers)
+
+    for i, ticker in enumerate(tickers):
+        if status_callback and i % 5 == 0:
+            status_callback(f"Scanning {i}/{total}: {ticker}...")
+
+        data = scan_stock(ticker)
+        if not data:
+            continue
+
+        # Apply filters
+        if data["market_cap"] < min_market_cap:
+            continue
+        if max_pe and (data["pe_ratio"] is None or data["pe_ratio"] > max_pe):
+            continue
+        if min_revenue_growth and (data["revenue_growth"] is None or data["revenue_growth"] < min_revenue_growth):
+            continue
+        if max_debt_to_equity and (data["debt_to_equity"] is None or data["debt_to_equity"] > max_debt_to_equity):
+            continue
+
+        position = calculate_52w_position(data)
+        if near_52_week_low and (position is None or position > 15):
+            continue
+        if near_52_week_high and (position is None or position < 85):
+            continue
+
+        data["upside_pct"] = calculate_upside(data)
+        data["52w_position"] = position
+        results.append(data)
+
+    results.sort(key=lambda x: x.get("upside_pct") or -999, reverse=True)
+
+    if status_callback:
+        status_callback(f"Done! {len(results)} stocks passed filters.")
+
+    return results[:max_results]
