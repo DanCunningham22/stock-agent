@@ -88,9 +88,13 @@ if mode == "Quant Screener":
             "momentum_score",
             "bounce_score",
             "analyst_score",
-            "liquidity_score"
+            "liquidity_score",
+            "volatility_score"
         ]]
 
+        existing_cols = [c for c in columns_to_show if c in display_df.columns]
+
+        display_df = display_df[existing_cols]
 
         st.dataframe(display_df, use_container_width=True)
 
@@ -173,8 +177,6 @@ if mode == "Quant Screener":
             st.write("Alpha:", round(result["alpha"] * 100, 2), "%")
             st.write("Sharpe:", round(result["sharpe"], 2))
             st.write("Max Drawdown:", round(result["max_drawdown"] * 100, 2), "%")
-
-
 
 # ============================================================
 # SINGLE STOCK
