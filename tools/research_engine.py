@@ -317,7 +317,7 @@ def backtest_portfolio(days_forward=30):
 # MAIN RUNNER
 # ============================================================
 
-def run_daily_model(print(f"Universe size: {len(universe)}")):
+def run_daily_model():
 
     init_db()
 
