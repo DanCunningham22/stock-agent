@@ -5,3 +5,5 @@ requests>=2.31
 streamlit>=1.30.0
 twilio>=9.0.0
 schedule>=1.2.0
+pandas
+lxml
