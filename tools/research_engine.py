@@ -69,39 +69,9 @@ def init_db():
 # ============================================================
 
 def get_all_us_stocks():
-    """
-    Cloud-safe universe builder.
-    Uses major US tickers from Yahoo directly.
-    No FTP. No scraping.
-    """
-
-    # Major index components + large universes
-    base_universe = []
-
-    # S&P 500 via yfinance (safe)
-    try:
-        sp500 = yf.Ticker("^GSPC")
-        sp500_components = sp500.constituents
-        if sp500_components is not None:
-            base_universe.extend(sp500_components.index.tolist())
-    except:
-        pass
-
-    # Fallback: use common liquid tickers if above fails
-    if not base_universe:
-        base_universe = [
-            "AAPL","MSFT","GOOGL","AMZN","META","NVDA","TSLA","BRK-B","JPM",
-            "V","MA","UNH","XOM","HD","PG","AVGO","LLY","MRK","COST",
-            "ABBV","PEP","KO","CVX","ADBE","NFLX","AMD","CRM","INTC",
-            "PYPL","BAC","WMT","CSCO","T","DIS","NKE","LIN","DHR",
-            "ORCL","MCD","QCOM","TXN","UPS","LOW","AMGN","HON",
-            "IBM","RTX","CAT","BA"
-        ]
-
-    return list(set(base_universe))
-
-
-
+    import pandas as pd
+    df = pd.read_csv("tools/universe.csv")
+    return df["ticker"].dropna().unique().tolist()
 
 # ============================================================
 # LIQUIDITY FILTER
@@ -347,7 +317,7 @@ def backtest_portfolio(days_forward=30):
 # MAIN RUNNER
 # ============================================================
 
-def run_daily_model():
+def run_daily_model(print(f"Universe size: {len(universe)}")):
 
     init_db()
 
