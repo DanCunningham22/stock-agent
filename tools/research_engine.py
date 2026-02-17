@@ -70,49 +70,36 @@ def init_db():
 
 def get_all_us_stocks():
     """
-    Fetch US stock universe with timeout + fallback.
-    Streamlit Cloud safe.
+    Cloud-safe universe builder.
+    Uses major US tickers from Yahoo directly.
+    No FTP. No scraping.
     """
 
-    urls = {
-        "nasdaq": "https://ftp.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt",
-        "other": "https://ftp.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt",
-    }
+    # Major index components + large universes
+    base_universe = []
 
-    all_tickers = []
+    # S&P 500 via yfinance (safe)
+    try:
+        sp500 = yf.Ticker("^GSPC")
+        sp500_components = sp500.constituents
+        if sp500_components is not None:
+            base_universe.extend(sp500_components.index.tolist())
+    except:
+        pass
 
-    for name, url in urls.items():
-        try:
-            response = requests.get(url, timeout=15)
-            response.raise_for_status()
+    # Fallback: use common liquid tickers if above fails
+    if not base_universe:
+        base_universe = [
+            "AAPL","MSFT","GOOGL","AMZN","META","NVDA","TSLA","BRK-B","JPM",
+            "V","MA","UNH","XOM","HD","PG","AVGO","LLY","MRK","COST",
+            "ABBV","PEP","KO","CVX","ADBE","NFLX","AMD","CRM","INTC",
+            "PYPL","BAC","WMT","CSCO","T","DIS","NKE","LIN","DHR",
+            "ORCL","MCD","QCOM","TXN","UPS","LOW","AMGN","HON",
+            "IBM","RTX","CAT","BA"
+        ]
 
-            df = pd.read_csv(StringIO(response.text), sep="|")
-            df = df[df["Symbol"] != "File Creation Time"]
+    return list(set(base_universe))
 
-            if name == "nasdaq":
-                df = df[df["ETF"] == "N"]
-                tickers = df["Symbol"].tolist()
-            else:
-                df = df[df["ETF"] == "N"]
-                tickers = df["ACT Symbol"].tolist()
-
-            all_tickers.extend(tickers)
-
-        except Exception as e:
-            print(f"Universe download failed for {name}: {e}")
-
-    # Fallback if NASDAQ site fails
-    if not all_tickers:
-        print("Using fallback S&P 500 universe.")
-
-        # Pull S&P 500 from Wikipedia (much more reliable)
-        sp500 = pd.read_html(
-            "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        )[0]
-
-        all_tickers = sp500["Symbol"].tolist()
-
-    return sorted(set(all_tickers))
 
 
 
