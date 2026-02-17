@@ -80,15 +80,17 @@ if mode == "Quant Screener":
         display_df = display_df[[
             "ticker",
             "total_score",
+            "rank",
+            "rank_change",
             "value_score",
             "growth_score",
             "quality_score",
             "momentum_score",
             "bounce_score",
             "analyst_score",
-            "liquidity_score",
-            "rank"
+            "liquidity_score"
         ]]
+
 
         st.dataframe(display_df, use_container_width=True)
 
@@ -164,7 +166,14 @@ if mode == "Quant Screener":
     if bt_60:
         with st.spinner("Running 60-day backtest..."):
             result = backtest_portfolio(60)
-        st.success(f"Average 60-day forward return: {round(result * 100, 2)}%")
+
+        if result:
+            st.write("Model Return:", round(result["total_return"] * 100, 2), "%")
+            st.write("SPY Return:", round(result["spy_return"] * 100, 2), "%")
+            st.write("Alpha:", round(result["alpha"] * 100, 2), "%")
+            st.write("Sharpe:", round(result["sharpe"], 2))
+            st.write("Max Drawdown:", round(result["max_drawdown"] * 100, 2), "%")
+
 
 
 # ============================================================

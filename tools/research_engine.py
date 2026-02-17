@@ -17,13 +17,14 @@ MIN_PRICE = 5
 MIN_VOLUME = 500_000
 
 FACTOR_WEIGHTS = {
-    "value": 0.20,
-    "growth": 0.20,
-    "quality": 0.15,
-    "momentum": 0.15,
-    "bounce": 0.10,
-    "analyst": 0.10,
+    "value": 0.18,
+    "growth": 0.18,
+    "quality": 0.14,
+    "momentum": 0.14,
+    "bounce": 0.08,
+    "analyst": 0.08,
     "liquidity": 0.10,
+    "volatility": 0.10,
 }
 
 # ============================================================
@@ -153,7 +154,7 @@ def fetch_all_fundamentals(tickers):
 # ============================================================
 
 def normalize(series):
-    return (series - series.min()) / (series.max() - series.min() + 1e-9) * 100
+    return (series - series.mean()) / (series.std() + 1e-9)
 
 
 def compute_scores(valid_tickers, price_data, fundamentals):
@@ -195,6 +196,10 @@ def compute_scores(valid_tickers, price_data, fundamentals):
         # LIQUIDITY
         liquidity_raw = df["Volume"].mean()
 
+        # VOLATILITY (penalty)
+        volatility = df["Close"].pct_change().std()
+        volatility_raw = -volatility
+
         rows.append({
             "ticker": ticker,
             "price": price,
@@ -205,6 +210,7 @@ def compute_scores(valid_tickers, price_data, fundamentals):
             "bounce_raw": bounce_raw,
             "analyst_raw": analyst_raw,
             "liquidity_raw": liquidity_raw,
+            "volatility_raw": volatility_raw,
         })
 
     df_scores = pd.DataFrame(rows)
@@ -217,6 +223,7 @@ def compute_scores(valid_tickers, price_data, fundamentals):
         "bounce_raw",
         "analyst_raw",
         "liquidity_raw",
+        "volatility_raw",
     ]:
         df_scores[col.replace("_raw", "_score")] = normalize(df_scores[col])
 
@@ -227,7 +234,8 @@ def compute_scores(valid_tickers, price_data, fundamentals):
         df_scores["momentum_score"] * FACTOR_WEIGHTS["momentum"] +
         df_scores["bounce_score"] * FACTOR_WEIGHTS["bounce"] +
         df_scores["analyst_score"] * FACTOR_WEIGHTS["analyst"] +
-        df_scores["liquidity_score"] * FACTOR_WEIGHTS["liquidity"]
+        df_scores["liquidity_score"] * FACTOR_WEIGHTS["liquidity"] +
+        df_scores["volatility_score"] * FACTOR_WEIGHTS["volatility"]
     )
 
     df_scores = df_scores.sort_values("total_score", ascending=False)
@@ -269,7 +277,40 @@ def save_portfolio(df_scores):
     today = str(dt.date.today())
     conn = sqlite3.connect(DB_NAME)
 
-    top = df_scores.head(TOP_N)
+    # -------------------------------------------------
+    # Rank buffer logic (reduces turnover)
+    # -------------------------------------------------
+
+    conn2 = sqlite3.connect(DB_NAME)
+
+    yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
+
+    prev_df = pd.read_sql(
+        f"""
+        SELECT ticker, rank as previous_rank
+        FROM daily_scores
+        WHERE date = '{yesterday}'
+        """,
+        conn2
+    )
+
+    conn2.close()
+
+    if not prev_df.empty:
+        prev_top = prev_df.sort_values("previous_rank").head(TOP_N)["ticker"].tolist()
+        df_scores["was_in_portfolio"] = df_scores["ticker"].isin(prev_top)
+    else:
+        df_scores["was_in_portfolio"] = False
+
+    # Entry: rank <= 15
+    # Exit: keep if rank <= 30 AND was already held
+    buffered = df_scores[
+        (df_scores["rank"] <= 15) |
+        ((df_scores["rank"] <= 30) & (df_scores["was_in_portfolio"]))
+    ]
+
+    top = buffered.sort_values("rank").head(TOP_N)
+
 
     portfolio = pd.DataFrame({
         "date": today,
@@ -286,7 +327,8 @@ def save_portfolio(df_scores):
 # BACKTEST
 # ============================================================
 
-def backtest_portfolio(days_forward=30):
+def backtest_portfolio(days_forward=60):
+
     conn = sqlite3.connect(DB_NAME)
     today = str(dt.date.today())
 
@@ -294,23 +336,34 @@ def backtest_portfolio(days_forward=30):
         f"SELECT ticker FROM portfolio_history WHERE date = '{today}'",
         conn
     )
-
     conn.close()
 
     tickers = portfolio["ticker"].tolist()
 
-    data = yf.download(tickers, period=f"{days_forward}d", progress=False)
+    if not tickers:
+        return None
 
-    returns = []
-    for ticker in tickers:
-        try:
-            start = data["Close"][ticker].iloc[0]
-            end = data["Close"][ticker].iloc[-1]
-            returns.append((end / start) - 1)
-        except:
-            continue
+    data = yf.download(tickers + ["SPY"], period=f"{days_forward}d", progress=False)["Close"]
 
-    return np.mean(returns)
+    returns = data.pct_change().dropna()
+
+    portfolio_returns = returns[tickers].mean(axis=1)
+    spy_returns = returns["SPY"]
+
+    cumulative = (1 + portfolio_returns).cumprod()
+    spy_cumulative = (1 + spy_returns).cumprod()
+
+    sharpe = portfolio_returns.mean() / (portfolio_returns.std() + 1e-9) * (252**0.5)
+    drawdown = (cumulative / cumulative.cummax() - 1).min()
+    alpha = cumulative.iloc[-1] - spy_cumulative.iloc[-1]
+
+    return {
+        "total_return": cumulative.iloc[-1] - 1,
+        "spy_return": spy_cumulative.iloc[-1] - 1,
+        "alpha": alpha,
+        "sharpe": sharpe,
+        "max_drawdown": drawdown,
+    }
 
 
 # ============================================================
@@ -339,10 +392,37 @@ def run_daily_model():
     save_daily_scores(df_scores)
     save_portfolio(df_scores)
 
+    # ----------------------------------------------------------
+    # Rank Change vs Yesterday
+    # ----------------------------------------------------------
+
+    conn = sqlite3.connect(DB_NAME)
+
+    yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
+
+    prev_df = pd.read_sql(
+        f"""
+        SELECT ticker, rank as previous_rank
+        FROM daily_scores
+        WHERE date = '{yesterday}'
+        """,
+        conn
+    )
+
+    conn.close()
+
+    if not prev_df.empty:
+        df_scores = df_scores.merge(prev_df, on="ticker", how="left")
+        df_scores["rank_change"] = df_scores["previous_rank"] - df_scores["rank"]
+    else:
+        df_scores["previous_rank"] = None
+        df_scores["rank_change"] = None
+
     print("\nTop 20 Portfolio:")
-    print(df_scores.head(TOP_N)[["ticker", "total_score", "rank"]])
+    print(df_scores.head(TOP_N)[["ticker", "total_score", "rank", "rank_change"]])
 
     return df_scores.head(TOP_N)
+
 
 
 # ============================================================
