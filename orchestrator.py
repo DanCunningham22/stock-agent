@@ -1,5 +1,6 @@
 import anthropic
 import json
+import yfinance as yf
 
 from config import ANTHROPIC_API_KEY, MODEL_FAST, MAX_TOKENS_PER_STOCK
 from tools.market_data import (
@@ -190,6 +191,11 @@ def execute_tool(name: str, input_data: dict) -> str:
 
 
 def analyze_stock(ticker: str, status_callback=None, run_alerts=True) -> str:
+    try:
+        company_name = yf.Ticker(ticker).info.get('longName', ticker)
+    except:
+        company_name = ticker
+
     def update_status(msg):
         if status_callback:
             status_callback(msg)
@@ -199,7 +205,7 @@ def analyze_stock(ticker: str, status_callback=None, run_alerts=True) -> str:
         {
             "role": "user",
             "content": (
-                f"Research and analyze {ticker}. Follow this workflow:\n\n"
+                f"Research and analyze {company_name} (ticker: {ticker}). Follow this workflow:\n\n"
                 f"1. Fetch current stock data for {ticker}.\n"
                 f"2. Fetch financial statements.\n"
                 f"3. Get 1-year price history with moving averages.\n"
